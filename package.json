@@ -1,0 +1,23 @@
+{
+  "name": "warera-ingest",
+  "version": "0.3.0",
+  "description": "",
+  "license": "UNLICENSED",
+  "author": "",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "node --loader ts-node/esm --env-file=.env index.ts",
+    "test": "node --loader ts-node/esm --env-file=.env test.ts"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
+  },
+  "dependencies": {
+    "@types/node": "^25.6.0",
+    "@wareraprojects/api": "^0.3.0-beta.0",
+    "commander": "^14.0.3",
+    "postgres": "^3.4.9",
+    "typescript": "^6.0.3"
+  }
+}

@@ -7,7 +7,7 @@ export class Scheduler {
   private activeWorkers = new Map<Worker, TaskType>();
   private readonly maxWorkers: number;
 
-  constructor(private db: Database, private factory: TaskFactory, maxWorkers = 1) {
+  constructor(private db: Database, private factory: TaskFactory, maxWorkers = 3) {
     this.maxWorkers = maxWorkers;
   }
 

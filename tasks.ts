@@ -2,21 +2,26 @@ import { parseCursorDate } from "./util.js";
 import type { Database } from "./queries.js";
 import type { APIClient } from "@wareraprojects/api";
 import type { Run } from "./run.js";
+import type { PageResultFromOutput, UserGetUsersByCountryResponse } from "@wareraprojects/api";
 
 export abstract class BaseTask {
-  constructor(protected taskType: TaskType) { }
+  constructor(protected taskType: TaskType,
+
+  ) { }
   abstract execute(run: Run): AsyncGenerator<{ count: number }>;
 }
 
 export class GetBestRegionsTask extends BaseTask {
   constructor(
-    private readonly client: any,
+    private readonly client: APIClient,
     private readonly db: Database
   ) { super("best_regions") }
 
   async *execute(run: Run): AsyncGenerator<{ count: number }> {
     const cfg = await this.client.gameConfig.getGameConfig();
-    const itemCodes = Object.values(cfg.items as Record<string, { code: string; productionPoints: number }>)
+    const itemCodes = Object.values(
+      cfg.items as unknown as Record<string, { code: string; productionPoints: number }>
+    )
       .filter(item => item.productionPoints > 0)
       .map(item => item.code);
 
@@ -30,13 +35,86 @@ export class GetBestRegionsTask extends BaseTask {
         data: rec,
       }));
 
-      await this.db.upsertBestRegions(values, this.taskType);
+      await this.db.insertBestRegions(values, this.taskType);
       yield { count: values.length };
     }
   }
 }
 
-// Shared logic: cursor tracking + upsert
+export class GetUsernamesTask extends BaseTask {
+  constructor(
+    private readonly client: APIClient,
+    private readonly db: Database
+  ) { super("usernames") }
+  private async getAllCountryIds(): Promise<string[]> {
+    return this.client.country.getAllCountries()
+      .then(countries => countries.map(c => c._id));
+  }
+
+  private async *streamUserPages():
+    AsyncGenerator<PageResultFromOutput<UserGetUsersByCountryResponse>> {
+    const countryIds = await this.getAllCountryIds();
+
+    for (const countryId of countryIds) {
+      yield* this.client.user.getUsersByCountry({
+        countryId,
+        limit: 100,
+        autoPaginate: true,
+        maxPages: 20,
+      });
+    }
+  }
+  private async resolveUsername(id: string): Promise<{ id: string; username: string | null }> {
+    try {
+      const userData = await this.client.user.getUserLite({ userId: id });
+      return { id, username: userData.username };
+    } catch {
+      return { id, username: null };
+    }
+  }
+
+  private async *streamActiveUserValues(): AsyncGenerator<{ id: string; username: string | null }> {
+    for await (const page of this.streamUserPages()) {
+      const usersValues = await Promise.all(
+        page.items.map(item => this.resolveUsername(item._id)));
+      yield* usersValues;
+    }
+  }
+
+  private async *streamUnknownUserValues(): AsyncGenerator<{ id: string; username: string | null }> {
+    const unknownIds = await this.db.getUnknownUsers();
+    const usersValues = await Promise.all(
+      unknownIds.map(id => this.resolveUsername(id))
+    );
+    yield* usersValues;
+  }
+
+  private async *streamUserValues(): AsyncGenerator<{ id: string; username: string | null }> {
+    yield* this.streamActiveUserValues();
+    yield* this.streamUnknownUserValues();
+  }
+
+  private async *batchUserValues(batchSize = 500): AsyncGenerator<{ id: string; username: string | null }[]> {
+    let batch: { id: string; username: string | null }[] = [];
+
+    for await (const user of this.streamUserValues()) {
+      batch.push(user);
+      if (batch.length >= batchSize) {
+        yield batch;
+        batch = [];
+      }
+    }
+    if (batch.length > 0) yield batch;
+  }
+
+  async *execute(): AsyncGenerator<{ count: number }> {
+    for await (const batch of this.batchUserValues()) {
+      await this.db.upsertUsernames(batch);
+      yield { count: batch.length };
+    }
+  }
+}
+// Shared logic: cursor tracking + insert
 interface Resumable {
   loadResumePoint(db: Database): Promise<void>;
 }
@@ -67,7 +145,7 @@ abstract class GetPaginatedTask extends BaseTask implements Resumable {
         if (!run.cursorStart) run.cursorStart = cursorDate;
         run.cursorEnd = cursorDate;
       }
-      await this.db.upsertItems(
+      await this.db.insertItems(
         page.items.map(i => ({ id: i._id, data: i })),
         this.taskType
       );
@@ -120,10 +198,11 @@ export class GetActionTask extends GetPaginatedTask {
 }
 
 export const TaskRegistry = {
+  usernames: GetUsernamesTask,
+  best_regions: GetBestRegionsTask,
   transactions: GetTransactionsTask,
   sanctions: GetSanctionsTask,
-  actions: GetActionTask,
-  best_regions: GetBestRegionsTask,
+  actions: GetActionTask
 } as const
 
 export type TaskType = keyof typeof TaskRegistry

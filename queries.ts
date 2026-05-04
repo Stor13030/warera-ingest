@@ -7,6 +7,7 @@ const taskTables: Record<TaskType, string> = {
   transactions: "transactions_raw",
   sanctions: "sanctions_raw",
   actions: "actions_raw",
+  usernames: "usernames",
   best_regions: "best_regions_raw"
 };
 
@@ -40,6 +41,14 @@ export class Database {
     return lastRun?.cursor_start ?? null;
   }
 
+  async getUnknownUsers(): Promise<string[]> {
+    const users = await this.sql<{ id: string }[]>`
+      SELECT id FROM usernames
+      WHERE username IS NULL
+    `;
+    return users.map((u: { id: string }) => u.id);
+  }
+
   async insertRun(
     run: Run,
   ): Promise<number> {
@@ -52,7 +61,7 @@ export class Database {
     return row.id;
   }
 
-  async upsertItems(
+  async insertItems(
     values: {
       id: string;
       data: any,
@@ -69,7 +78,22 @@ export class Database {
     `;
   }
 
-  async upsertBestRegions(
+  async upsertUsernames(
+    values: {
+      id: string,
+      username: string | null,
+    }[]
+  ): Promise<void> {
+    if (values.length === 0) return;
+    const rows = values.map(v => ({ id: v.id, username: v.username }));
+
+    await this.sql`
+    INSERT INTO usernames ${this.sql(rows, 'id', 'username')}
+    ON CONFLICT(id) DO UPDATE SET username = EXCLUDED.username
+  `;
+  }
+
+  async insertBestRegions(
     values: {
       itemCode: string,
       rank: number,

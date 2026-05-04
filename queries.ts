@@ -85,7 +85,7 @@ export class Database {
     }[]
   ): Promise<void> {
     if (values.length === 0) return;
-    const rows = values.map(v => ({ id: v.id, username: v.username }));
+    const rows = [...new Map(values.map(v => [v.id, v])).values()];
 
     await this.sql`
     INSERT INTO usernames ${this.sql(rows, 'id', 'username')}
